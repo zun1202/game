@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>おしゃべり勇者のダンジョン - AI Edition</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=DotGothic16&display=swap');
+        
+        :root {
+            --bg-dark: #121212;
+            --window-bg: #222222;
+            --text-main: #ffffff;
+            --accent-gold: #ffd700;
+            --accent-blue: #0088ff;
+            --border-style: 4px double #888;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: 'DotGothic16', sans-serif;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        #game-wrapper {
+            width: 100%;
+            max-width: 500px;
+            height: 95vh;
+            display: flex;
+            flex-direction: column;
+            border: 6px solid #444;
+            background-color: var(--window-bg);
+            padding: 10px;
+            box-sizing: border-box;
+            position: relative;
+        }
+
+        #status-panel {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 10px;
+            border: var(--border-style);
+            margin-bottom: 10px;
+            background: #000;
+            font-size: 14px;
+        }
+
+        #visual-screen {
+            flex: 1;
+            background: #000;
+            border: var(--border-style);
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+
+        #enemy-sprite {
+            width: 120px;
+            height: 120px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 40px;
+            border: 4px solid #fff;
+            transition: transform 0.2s, filter 0.2s;
+            background: #444;
+            z-index: 2;
+        }
+
+        .damage-anim { animation: shake 0.3s; filter: brightness(2); }
+        @keyframes shake {
+            0% { transform: translateX(0); }
+            25% { transform: translateX(-10px); }
+            50% { transform: translateX(10px); }
+            75% { transform: translateX(-10px); }
+            100% { transform: translateX(0); }
+        }
+
+        #gauge-container {
+            width: 70%;
+            margin-top: 15px;
+            text-align: center;
+        }
+        .bar-bg {
+            height: 10px;
+            background: #333;
+            border: 1px solid #fff;
+            width: 100%;
+        }
+        #mood-bar {
+            height: 100%;
+            width: 0%;
+            background: var(--accent-blue);
+            transition: width 0.4s ease;
+        }
+
+        #message-window {
+            height: 150px;
+            border: var(--border-style);
+            margin: 10px 0;
+            padding: 10px;
+            background: #000;
+            overflow-y: auto;
+            font-size: 16px;
+            line-height: 1.6;
+        }
+
+        #input-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            min-height: 80px;
+        }
+
+        #button-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        #chat-input-area {
+            display: none;
+            gap: 5px;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            background: #000;
+            color: #fff;
+            border: 2px solid #666;
+            padding: 8px;
+            font-family: 'DotGothic16', sans-serif;
+        }
+
+        button {
+            background: #333;
+            color: #fff;
+            border: 3px outset #666;
+            padding: 10px;
+            font-family: 'DotGothic16', sans-serif;
+            font-size: 15px;
+            cursor: pointer;
+        }
+
+        button:active { border-style: inset; background: #222; }
+        button:disabled { color: #666; cursor: not-allowed; opacity: 0.5; }
+
+        .overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.9);
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-wrapper">
+    <div id="status-panel">
+        <div>精神力: <span id="hp-val">10</span>/10</div>
+        <div>フロア: <span id="floor-label">村</span></div>
+    </div>
+
+    <div id="visual-screen">
+        <div id="enemy-sprite" style="display:none;"></div>
+        <div id="gauge-container" style="display:none;">
+            <div style="font-size: 12px; margin-bottom: 4px;">ごきげん度</div>
+            <div class="bar-bg"><div id="mood-bar"></div></div>
+        </div>
+        <div id="scene-bg-text" style="color: #444; text-align: center; padding: 20px;"></div>
+    </div>
+
+    <div id="message-window"></div>
+
+    <div id="input-panel">
+        <div id="button-grid"></div>
+        <form id="chat-input-area" onsubmit="handleChatSubmit(event)">
+            <input type="text" id="user-input" placeholder="何か話しかけて..." autocomplete="off">
+            <button type="submit" id="send-btn">話す</button>
+        </form>
+    </div>
+
+    <div id="modal" class="overlay">
+        <h1 id="modal-title" style="color:red;">GAME OVER</h1>
+        <p id="modal-text"></p>
+        <button onclick="location.reload()">最初からやり直す</button>
+    </div>
+</div>
+
+<script type="module">
+    // --- Google AI Studio (Gemini API) Setup ---
+    const apiKey = ""; // API Key will be injected by the environment
+    
+    // Enemy Data with System Prompts
+    const ENEMY_DATA = {
+        slime: { 
+            name: "ぷるぷるスライム", 
+            emoji: "💧", 
+            moodMax: 5, 
+            color: "#00aaff",
+            prompt: "あなたは『ぷるぷるスライム』というモンスターです。語尾に「～ぷる」をつけて、可愛らしく、少しのんびりした口調で勇者と会話してください。勇者が優しければ喜び、攻撃的だったり冷たかったりすると悲しみます。"
+        },
+        goblin: { 
+            name: "理論派ゴブリン", 
+            emoji: "👺", 
+            moodMax: 7, 
+            color: "#44aa44",
+            prompt: "あなたは『理論派ゴブリン』です。非常に論理的でインテリ、少し嫌味なビジネスマンのような口調で話します。勇者が非論理的だったりマナーが悪かったりすると不快に感じ、建設的な対話を好みます。"
+        },
+        dragon: { 
+            name: "爆音ドラゴン", 
+            emoji: "🐲", 
+            moodMax: 12, 
+            color: "#ff4444",
+            prompt: "あなたはロックミュージシャンを夢見る『爆音ドラゴン』です。常にハイテンションで、音楽用語を交えた熱い口調で話します。勇者がノリが悪いと怒りますが、一緒に盛り上がるとすぐに心を開きます。"
+        }
+    };
+
+    let state = {
+        hp: 10,
+        floor: 0,
+        location: "village",
+        enemy: null,
+        isThinking: false
+    };
+
+    // --- Core Functions ---
+
+    async function callGemini(userInput, enemy) {
+        const systemPrompt = `${enemy.prompt}\n\n重要ルール：\n1. 回答の最後には必ず以下のJSONフォーマットを[SCORE:{"mood":数値,"damage":数値}]の形で含めてください。\n2. moodは相手への好感度が上がった場合に1～3、damageは相手が失礼だったり攻撃的だった場合に1～3を設定してください。\n3. 返答テキスト自体にはJSONを含めず、自然な会話にしてください。`;
+        
+        const payload = {
+            contents: [{ parts: [{ text: userInput }] }],
+            systemInstruction: { parts: [{ text: systemPrompt }] }
+        };
+
+        let retries = 5;
+        let delay = 1000;
+
+        while (retries > 0) {
+            try {
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+                return result.candidates?.[0]?.content?.parts?.[0]?.text || "（沈黙している...）";
+            } catch (e) {
+                retries--;
+                if (retries === 0) throw e;
+                await new Promise(r => setTimeout(r, delay));
+                delay *= 2;
+            }
+        }
+    }
+
+    // --- UI Logic ---
+
+    function log(msg, color = "#fff") {
+        const win = document.getElementById('message-window');
+        const div = document.createElement('div');
+        div.style.color = color;
+        div.innerText = msg;
+        win.appendChild(div);
+        win.scrollTop = win.scrollHeight;
+    }
+
+    function updateStats() {
+        document.getElementById('hp-val').innerText = state.hp;
+        document.getElementById('floor-label').innerText = state.location === "village" ? "平和な村" : `地下 ${state.floor} 階`;
+        
+        if (state.hp <= 0) {
+            showModal("GAME OVER", "勇者の心が折れてしまった...");
+        }
+    }
+
+    function setButtons(actions) {
+        const grid = document.getElementById('button-grid');
+        const chatArea = document.getElementById('chat-input-area');
+        grid.innerHTML = '';
+        
+        if (actions === null) {
+            grid.style.display = 'none';
+            chatArea.style.display = 'flex';
+            return;
+        }
+
+        grid.style.display = 'grid';
+        chatArea.style.display = 'none';
+        actions.forEach(act => {
+            const btn = document.createElement('button');
+            btn.innerText = act.label;
+            btn.onclick = act.func;
+            grid.appendChild(btn);
+        });
+    }
+
+    function showModal(title, text) {
+        const m = document.getElementById('modal');
+        document.getElementById('modal-title').innerText = title;
+        document.getElementById('modal-text').innerText = text;
+        m.style.display = 'flex';
+    }
+
+    // --- Game Logic ---
+
+    function goVillage() {
+        state.location = "village";
+        state.floor = 0;
+        state.hp = 10;
+        updateStats();
+        
+        document.getElementById('enemy-sprite').style.display = 'none';
+        document.getElementById('gauge-container').style.display = 'none';
+        document.getElementById('scene-bg-text').innerText = "[村]\nのどかな時間が流れている。";
+
+        setButtons([
+            { label: "探索に出発", func: startDungeon },
+            { label: "寝る (全回復)", func: () => { 
+                state.hp = 10;
+                log("ぐっすり眠ってメンタルが全回復した！"); 
+                updateStats(); 
+            } }
+        ]);
+    }
+
+    function startDungeon() {
+        state.location = "dungeon";
+        nextFloor();
+    }
+
+    function nextFloor() {
+        state.floor++;
+        updateStats();
+        log(`地下 ${state.floor} 階に進んだ...`);
+        
+        document.getElementById('scene-bg-text').innerText = `地下 ${state.floor} 階\nどんよりとした空気が漂う。`;
+
+        const r = Math.random();
+        if (state.floor === 5) {
+            encounter("dragon");
+        } else if (r < 0.3) {
+            log("誰もいない。静かだ。");
+            setButtons([{ label: "さらに奥へ", func: nextFloor }, { label: "村へ帰る", func: goVillage }]);
+        } else {
+            encounter(r < 0.65 ? "slime" : "goblin");
+        }
+    }
+
+    function encounter(key) {
+        const data = ENEMY_DATA[key];
+        state.enemy = { ...data, id: key, mood: 0 };
+
+        const sprite = document.getElementById('enemy-sprite');
+        sprite.style.display = 'flex';
+        sprite.innerText = data.emoji;
+        sprite.style.borderColor = data.color;
+        
+        document.getElementById('gauge-container').style.display = 'block';
+        document.getElementById('mood-bar').style.width = '0%';
+        
+        log(`${data.name} が立ちふさがった！`);
+        log(`${data.name}「......」`);
+        
+        setButtons(null); // Switch to Chat Input
+    }
+
+    window.handleChatSubmit = async (e) => {
+        e.preventDefault();
+        const input = document.getElementById('user-input');
+        const text = input.value.trim();
+        if (!text || state.isThinking) return;
+
+        log(`勇者「${text}」`);
+        input.value = '';
+        state.isThinking = true;
+        document.getElementById('send-btn').disabled = true;
+
+        try {
+            const rawResponse = await callGemini(text, state.enemy);
+            
+            // Parse Score from response
+            let cleanText = rawResponse;
+            let moodIncr = 0;
+            let dmgIncr = 0;
+
+            const scoreMatch = rawResponse.match(/\[SCORE:({.*?})\]/);
+            if (scoreMatch) {
+                try {
+                    const scores = JSON.parse(scoreMatch[1]);
+                    moodIncr = scores.mood || 0;
+                    dmgIncr = scores.damage || 0;
+                    cleanText = rawResponse.replace(scoreMatch[0], "").trim();
+                } catch(e) {}
+            }
+
+            log(`${state.enemy.name}「${cleanText}」`, "#ffff00");
+
+            if (moodIncr > 0) {
+                state.enemy.mood += moodIncr;
+                log(`ごきげん度が ${moodIncr} 上がった！`, "#00ff00");
+            }
+            if (dmgIncr > 0) {
+                state.hp -= dmgIncr;
+                log(`勇者のメンタルに ${dmgIncr} のダメージ！`, "#ff4444");
+                document.getElementById('enemy-sprite').classList.add('damage-anim');
+                setTimeout(() => document.getElementById('enemy-sprite').classList.remove('damage-anim'), 300);
+            }
+
+            let progress = (state.enemy.mood / state.enemy.moodMax) * 100;
+            document.getElementById('mood-bar').style.width = `${Math.min(100, progress)}%`;
+            updateStats();
+
+            if (state.enemy.mood >= state.enemy.moodMax) {
+                log(`${state.enemy.name} は満足してどこかへ行った！`);
+                const lastEnemy = state.enemy.id;
+                state.enemy = null;
+                setTimeout(() => {
+                    if (lastEnemy === "dragon") {
+                        showModal("HAPPY END", "ドラゴンと親友になった！村に平和が訪れた！");
+                    } else {
+                        setButtons([{ label: "先へ進む", func: nextFloor }]);
+                    }
+                }, 1000);
+            }
+
+        } catch (err) {
+            log("エラー：通信に失敗しました。", "#ff0000");
+        } finally {
+            state.isThinking = false;
+            document.getElementById('send-btn').disabled = false;
+        }
+    };
+
+    window.onload = goVillage;
+</script>
+
+</body>
+</html>
